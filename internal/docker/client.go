@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	// "os"
+	"os"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -105,6 +105,27 @@ func (dc *DockerClient) StartContainer(imageName string, pull bool) (TerminalRes
 		Result: logs,
 	}, nil
 }
+
+// functions for debugging
+
+func PrintTerminalResponse(response TerminalResponse) {
+	io.Copy(os.Stdout, response.Result)
+	defer response.Result.Close()
+}
+
+func (dc *DockerClient) ListImages() {
+
+	images, err := dc.cli.ImageList(dc.ctx, image.ListOptions{})
+	if err != nil {
+		panic(err)
+	}
+
+	for _, image := range images {
+		fmt.Println(image.ID)
+	}
+	
+}
+
 
 // example usage
 // func main() {

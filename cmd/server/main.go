@@ -1,9 +1,6 @@
 package main
 
 import (
-	"io"
-	"os"
-
 	"github.com/ICBasecamp/K0/internal/docker"
 )
 
@@ -20,6 +17,5 @@ func main() {
 		panic(err)
 	}
 
-	io.Copy(os.Stdout, response.Result)
-	defer response.Result.Close()
+	docker.PrintTerminalResponse(response)
 }
