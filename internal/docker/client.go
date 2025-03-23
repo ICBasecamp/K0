@@ -11,31 +11,37 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func main() {
-	ctx := context.Background()
+type DockerClient struct {
+	cli *client.Client
+	ctx context.Context
+}
+
+func CreateDockerClient() (*DockerClient, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	defer cli.Close()
+	return &DockerClient{
+		cli: cli,
+		ctx: context.Background(),
+	}, nil
+}
 
-	imageName := "hello-world"
-
-	out, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+func (dc *DockerClient) StartContainer(imageName string) (string, error) {
+	out, err := dc.cli.ImagePull(dc.ctx, imageName, image.PullOptions{})
 	if err != nil {
 		panic(err)
 	}
 	defer out.Close()
-	// io.Copy(os.Stdout, out)
 
-	resp, err := cli.ContainerCreate(ctx, &container.Config{
+	resp, err := dc.cli.ContainerCreate(dc.ctx, &container.Config{
 		Image: imageName,
 	}, nil, nil, nil, "")
 	if err != nil {
 		panic(err)
 	}
 
-	if err := cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+	if err := dc.cli.ContainerStart(dc.ctx, resp.ID, container.StartOptions{}); err != nil {
 		panic(err)
 	}
 
@@ -45,7 +51,7 @@ func main() {
 		Follow:     true,
 	}
 
-	logs, err := cli.ContainerLogs(ctx, resp.ID, options)
+	logs, err := dc.cli.ContainerLogs(dc.ctx, resp.ID, options)
 	if err != nil {
 		panic(err)
 	}
@@ -53,5 +59,15 @@ func main() {
 
 	io.Copy(os.Stdout, logs)
 
-	// fmt.Println(resp.ID)
+	return resp.ID, nil
+}
+
+// example usage
+func main() {
+	dc, err := CreateDockerClient()
+	if err != nil {
+		panic(err)
+	}
+
+	dc.StartContainer("hello-world")
 }
