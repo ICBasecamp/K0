@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"os"
+
 	"github.com/ICBasecamp/K0/internal/docker"
 )
 
@@ -12,8 +15,11 @@ func main() {
 		panic(err)
 	}
 
-	err = dc.BuildAndStartContainer("test-image", "../test-script")
+	response, err := dc.BuildAndStartContainer("test-image", "../test-script")
 	if err != nil {
 		panic(err)
 	}
+
+	io.Copy(os.Stdout, response.Result)
+	defer response.Result.Close()
 }

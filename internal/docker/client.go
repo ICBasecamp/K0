@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
+	// "os"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -34,7 +34,7 @@ func CreateDockerClient() (*DockerClient, error) {
 	}, nil
 }
 
-func (dc *DockerClient) BuildAndStartContainer(imageName string, buildContextPath string) (error) {
+func (dc *DockerClient) BuildAndStartContainer(imageName string, buildContextPath string) (TerminalResponse, error) {
 	buildContext, err := archive.TarWithOptions(buildContextPath, &archive.TarOptions{})
 	if err != nil {
 		panic(err)
@@ -52,9 +52,10 @@ func (dc *DockerClient) BuildAndStartContainer(imageName string, buildContextPat
 		panic(err)
 	}
 
-	_, err = io.Copy(os.Stdout, response.Body)
+	// replace io.Discard with os.Stdout for debugging and logging
+	_, err = io.Copy(io.Discard, response.Body)
 	if err != nil {
-		return fmt.Errorf("failed to read build output: %w", err)
+		return TerminalResponse{}, fmt.Errorf("failed to read build output: %w", err)
 	}
 
 	defer response.Body.Close()
@@ -64,12 +65,7 @@ func (dc *DockerClient) BuildAndStartContainer(imageName string, buildContextPat
 		panic(err)
 	}
 
-	// todo: refactor to return the response instead
-	io.Copy(os.Stdout, startResponse.Result)
-
-	defer startResponse.Result.Close()
-
-	return nil
+	return startResponse, nil
 }
 
 func (dc *DockerClient) StartContainer(imageName string, pull bool) (TerminalResponse, error) {
