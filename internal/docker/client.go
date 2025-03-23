@@ -1,4 +1,4 @@
-package main
+package docker
 
 import (
 	"context"
@@ -63,11 +63,11 @@ func (dc *DockerClient) StartContainer(imageName string) (string, error) {
 }
 
 // example usage
-func main() {
-	dc, err := CreateDockerClient()
-	if err != nil {
-		panic(err)
-	}
+// func main() {
+// 	dc, err := CreateDockerClient()
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	dc.StartContainer("hello-world")
-}
+// 	dc.StartContainer("hello-world")
+// }
