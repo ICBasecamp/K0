@@ -2,12 +2,15 @@ package docker
 
 import (
 	"context"
-	// "fmt"
+	"fmt"
 	"io"
+	"os"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/archive"
 )
 
 type DockerClient struct {
@@ -31,14 +34,54 @@ func CreateDockerClient() (*DockerClient, error) {
 	}, nil
 }
 
-func (dc *DockerClient) StartContainer(imageName string) (TerminalResponse, error) {
-	out, err := dc.cli.ImagePull(dc.ctx, imageName, image.PullOptions{})
+func (dc *DockerClient) BuildAndStartContainer(imageName string, buildContextPath string) (error) {
+	buildContext, err := archive.TarWithOptions(buildContextPath, &archive.TarOptions{})
 	if err != nil {
 		panic(err)
 	}
-	// Process the image pull output before closing
-	io.Copy(io.Discard, out)
-	defer out.Close()
+	defer buildContext.Close()
+
+	buildOptions := types.ImageBuildOptions{
+		Tags:       []string{imageName},
+		Dockerfile: "Dockerfile",
+		Remove:     true,
+	}
+
+	response, err := dc.cli.ImageBuild(dc.ctx, buildContext, buildOptions)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = io.Copy(os.Stdout, response.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read build output: %w", err)
+	}
+
+	defer response.Body.Close()
+
+	startResponse, err := dc.StartContainer(imageName + ":latest", false)
+	if err != nil {
+		panic(err)
+	}
+
+	// todo: refactor to return the response instead
+	io.Copy(os.Stdout, startResponse.Result)
+
+	defer startResponse.Result.Close()
+
+	return nil
+}
+
+func (dc *DockerClient) StartContainer(imageName string, pull bool) (TerminalResponse, error) {
+	if pull {
+		out, err := dc.cli.ImagePull(dc.ctx, imageName, image.PullOptions{})
+		if err != nil {
+			panic(err)
+		}
+		// Process the image pull output before closing
+		io.Copy(io.Discard, out)
+		defer out.Close()
+	}
 
 	resp, err := dc.cli.ContainerCreate(dc.ctx, &container.Config{
 		Image: imageName,
@@ -61,8 +104,6 @@ func (dc *DockerClient) StartContainer(imageName string) (TerminalResponse, erro
 	if err != nil {
 		panic(err)
 	}
-	// Don't defer close here as we're returning the logs to be consumed elsewhere
-
 	return TerminalResponse{
 		ID:     resp.ID,
 		Result: logs,
