@@ -4,7 +4,6 @@ import (
 	"context"
 	// "fmt"
 	"io"
-	"os"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -14,6 +13,11 @@ import (
 type DockerClient struct {
 	cli *client.Client
 	ctx context.Context
+}
+
+type TerminalResponse struct {
+	ID     string
+	Result io.ReadCloser
 }
 
 func CreateDockerClient() (*DockerClient, error) {
@@ -27,11 +31,13 @@ func CreateDockerClient() (*DockerClient, error) {
 	}, nil
 }
 
-func (dc *DockerClient) StartContainer(imageName string) (string, error) {
+func (dc *DockerClient) StartContainer(imageName string) (TerminalResponse, error) {
 	out, err := dc.cli.ImagePull(dc.ctx, imageName, image.PullOptions{})
 	if err != nil {
 		panic(err)
 	}
+	// Process the image pull output before closing
+	io.Copy(io.Discard, out)
 	defer out.Close()
 
 	resp, err := dc.cli.ContainerCreate(dc.ctx, &container.Config{
@@ -55,11 +61,12 @@ func (dc *DockerClient) StartContainer(imageName string) (string, error) {
 	if err != nil {
 		panic(err)
 	}
-	defer logs.Close()
+	// Don't defer close here as we're returning the logs to be consumed elsewhere
 
-	io.Copy(os.Stdout, logs)
-
-	return resp.ID, nil
+	return TerminalResponse{
+		ID:     resp.ID,
+		Result: logs,
+	}, nil
 }
 
 // example usage
