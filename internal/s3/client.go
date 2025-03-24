@@ -37,6 +37,7 @@ func CreateS3Client() (*S3Client, error) {
 	return &S3Client{cli: cli, ctx: context.TODO()}, nil
 }
 
+// were gonna need to change this to upload files directly instead of using a directory 
 func (sc *S3Client) TarAndUploadToS3(key, dir string) error {
 
 	bucketName := os.Getenv("AWS_S3_BUCKET")
@@ -81,6 +82,25 @@ func (sc *S3Client) TarAndUploadToS3(key, dir string) error {
 	return err
 }
 
+func (sc *S3Client) GetDockerBuildContext(key string) (io.ReadCloser, error) {
+
+	bucketName := os.Getenv("AWS_S3_BUCKET")
+	if bucketName == "" {
+		return nil, fmt.Errorf("AWS_S3_BUCKET environment variable is not set")
+	}
+
+	BuildContext, err := sc.cli.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("error getting object: %w", err)
+	}
+
+	return BuildContext.Body, nil
+}
+	
+
 
 // debugging
 func (sc *S3Client) ListObjects() ([]types.Object, error) {
@@ -109,19 +129,3 @@ func (sc *S3Client) ListObjects() ([]types.Object, error) {
 	return objects.Contents, nil
 }
 
-// func (sc *S3Client) GetDockerBuildContext(key string) (io.ReadCloser, error) {
-// 	bucketName := os.Getenv("AWS_S3_BUCKET")
-// 	if bucketName == "" {
-// 		return nil, fmt.Errorf("AWS_S3_BUCKET environment variable is not set")
-// 	}
-
-
-
-// 	buildContext, err := archive.TarWithOptions(buildContextPath, &archive.TarOptions{})
-// 	if err != nil {
-// 		return nil, fmt.Errorf("error creating tar: %w", err)
-// 	}
-
-// 	return buildContext, nil
-
-// }

@@ -34,6 +34,36 @@ func CreateDockerClient() (*DockerClient, error) {
 	}, nil
 }
 
+func (dc *DockerClient) BuildAndStartContainerWithBuildContext(imageName string, buildContext io.ReadCloser) (TerminalResponse, error) {
+	defer buildContext.Close()
+
+	buildOptions := types.ImageBuildOptions{
+		Tags:       []string{imageName},
+		Dockerfile: "Dockerfile",
+		Remove:     true,
+	}
+
+	response, err := dc.cli.ImageBuild(dc.ctx, buildContext, buildOptions)
+	if err != nil {
+		panic(err)
+	}
+
+	// replace io.Discard with os.Stdout for debugging and logging
+	_, err = io.Copy(io.Discard, response.Body)
+	if err != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to read build output: %w", err)
+	}
+
+	defer response.Body.Close()
+
+	startResponse, err := dc.StartContainer(imageName + ":latest", false)
+	if err != nil {
+		panic(err)
+	}
+
+	return startResponse, nil
+}
+
 func (dc *DockerClient) BuildAndStartContainer(imageName string, buildContextPath string) (TerminalResponse, error) {
 	buildContext, err := archive.TarWithOptions(buildContextPath, &archive.TarOptions{})
 	if err != nil {

@@ -2,7 +2,7 @@ package main
 
 import (
 
-	// "github.com/ICBasecamp/K0/internal/docker"
+	"github.com/ICBasecamp/K0/internal/docker"
 	"github.com/ICBasecamp/K0/internal/s3"
 )
 
@@ -27,8 +27,20 @@ func main() {
 		panic(err)
 	}
 
-	err = s3c.TarAndUploadToS3("test-image", "../test-script")
+	buildContext, err := s3c.GetDockerBuildContext("test-image")
 	if err != nil {
 		panic(err)
 	}
+
+	dc, err := docker.CreateDockerClient()
+	if err != nil {
+		panic(err)
+	}
+
+	response, err := dc.BuildAndStartContainerWithBuildContext("test-image", buildContext)
+	if err != nil {
+		panic(err)
+	}
+
+	docker.PrintTerminalResponse(response)
 }
