@@ -27,9 +27,8 @@ func main() {
 		panic(err)
 	}
 
-	_, err = s3c.ListObjects()
+	err = s3c.TarAndUploadToS3("test-image", "../test-script")
 	if err != nil {
 		panic(err)
 	}
-
 }
