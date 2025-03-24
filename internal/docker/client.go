@@ -74,7 +74,6 @@ func (dc *DockerClient) StartContainer(imageName string, pull bool) (TerminalRes
 		if err != nil {
 			panic(err)
 		}
-		// Process the image pull output before closing
 		io.Copy(io.Discard, out)
 		defer out.Close()
 	}
