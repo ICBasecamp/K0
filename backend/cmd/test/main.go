@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/ICBasecamp/K0/internal/container"
-	"github.com/ICBasecamp/K0/internal/docker"
-	"github.com/ICBasecamp/K0/internal/s3"
+	"github.com/ICBasecamp/K0/backend/pkg/container"
+	"github.com/ICBasecamp/K0/backend/pkg/docker"
+	"github.com/ICBasecamp/K0/backend/pkg/s3"
 )
 
 func main() {
