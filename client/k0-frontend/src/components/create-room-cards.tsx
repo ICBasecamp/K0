@@ -28,7 +28,7 @@ export const CreateNewRoomCard = () => {
                 Create a new room as an Interviewer.
               </CardDescription>
   
-              <ChevronRight className="mt-8 ml-auto h-6 text-white" />
+              <ChevronRight className="mt-8 ml-auto h-4 text-white" />
             </CardContent>
           </Card>
     )

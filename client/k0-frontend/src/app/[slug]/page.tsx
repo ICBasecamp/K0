@@ -1,6 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { cookies } from "next/headers";
-
+import { GithubRepoInput } from "@/components/github-repo-input";
 export default async function Page({ params }: { params: { slug: string } }) {
     const { slug: roomId } = params;
 
@@ -17,5 +17,10 @@ export default async function Page({ params }: { params: { slug: string } }) {
         return <div>Room not found</div>;
     }
 
-    return <div>Room id: {roomId}</div>;
+    return (
+        <div className="flex flex-col items-center justify-center h-screen">
+            <div>Room id: {roomId}</div>
+            <GithubRepoInput />
+        </div>
+    );
 }
