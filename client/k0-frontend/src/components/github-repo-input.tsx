@@ -7,17 +7,20 @@ export const GithubRepoInput = () => {
     const [githubLinkText, setGithubLinkText] = useState("https://github.com/docker/example-voting-app");  
     const [socket, setSocket] = useState<WebSocket | null>(null);
     const [logs, setLogs] = useState("");
+    const [isContainerStarting, setIsContainerStarting] = useState(false);
 
     return (
         <div>
             <input type="text" value={githubLinkText} onChange={(e) => setGithubLinkText(e.target.value)} />
             <button onClick={() => {
                 console.log(githubLinkText)
+                setIsContainerStarting(true)
                 axios.post(`${process.env.NEXT_PUBLIC_BACKEND_URL}/start-github-container`, {
                     room_id: "1",
                     github_link: githubLinkText
                 })
                 .then(res => {
+                    setIsContainerStarting(false)
                     const wsConnectionName = res.data.ws_connection_name
                     console.log("Connecting to WebSocket with name:", wsConnectionName)
                     
