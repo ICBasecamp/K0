@@ -51,7 +51,6 @@ export const JoinRoomCard = () => {
       router.push(`/${roomId}`);
     } else {
       setError("Room not found");
-      console.error("Room not found");
     }
   }
 
