@@ -11,6 +11,8 @@ const generateRoomId = () => {
     return result;
   };
 
+
+
 export async function POST(request: Request) {
   const cookieStore = cookies()
   const supabase = await createClient(cookieStore)

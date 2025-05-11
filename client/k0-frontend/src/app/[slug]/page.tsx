@@ -1,6 +1,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { cookies } from "next/headers";
-import { Console } from "@/components/console";
+import { InterviewPage } from "@/components/interview-page";
 
 export default async function Page({ params }: { params: { slug: string } }) {
     const { slug: roomId } = params;
@@ -20,8 +20,7 @@ export default async function Page({ params }: { params: { slug: string } }) {
 
     return (
         <div className="flex flex-col items-center justify-center h-screen">
-            <div>Room id: {roomId}</div>
-            <Console />
+            <InterviewPage roomId={roomId} />
         </div>
     );
 }
