@@ -1,19 +1,17 @@
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChevronRight } from 'lucide-react';
-import { cookies } from "next/headers";
-import { createClient } from "@/utils/supabase/server";
-import { CreateNewRoomCard } from "@/components/create-room-cards";
+import { CreateNewRoomCard, JoinRoomCard } from "@/components/create-room-cards";
 
 export default async function Home() {
   
-  const cookieStore = cookies()
-  const supabase = createClient(cookieStore)
-  
   return (
-    <div className="flex h-screen w-screen items-center justify-center">
-      <div className="flex gap-4">
-        <CreateNewRoomCard />
-
+    <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-black">
+      <div className="absolute h-[500px] w-[500px] rounded-full bg-red-500/30 blur-3xl opacity-40" style={{ top: '10%', left: '40%' }}></div>
+      <div className="absolute h-[600px] w-[600px] rounded-full bg-blue-500/30 blur-3xl opacity-40" style={{ top: '20%', left: '50%' }}></div>
+      <div className="relative flex flex-col items-center justify-center gap-16">
+        <p className="text-5xl font-mono font-bold text-white max-w-2xl text-center">Evaluate engineers by what matters most: their real code.</p>
+        <div className="flex gap-4">
+          <CreateNewRoomCard />
+          <JoinRoomCard />
+        </div>
       </div>
     </div>
   );
