@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { InterviewPage } from "@/components/interview-page";
 
 export default async function Page({ params }: { params: { slug: string } }) {
-    const { slug: roomId } = params;
+    const { slug: roomId } = await params;
 
     const cookieStore = cookies()
     const supabase = await createClient(cookieStore)

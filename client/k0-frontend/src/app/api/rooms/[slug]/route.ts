@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 
 
 export async function GET(request: Request, { params }: { params: { slug: string } }) {
-  const { slug: roomId } = params;
+  const { slug: roomId } = await params;
 
   const cookieStore = cookies()
   const supabase = await createClient(cookieStore)
