@@ -191,3 +191,33 @@ func (cm *ContainerManager) CreateContainerFromGitHub(clientID, imageName, githu
 
 	return container, nil
 }
+
+func (cm *ContainerManager) CreateContainerFromGitHubWS(clientID, imageName, githubURL string, ContainerStreams *sync.Map) (*Container, error) {
+	// Start a container using the Docker client with GitHub repository
+	response, err := cm.dockerClient.BuildAndStartContainerFromGitHubWS(imageName, githubURL, ContainerStreams)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create container from GitHub: %w", err)
+	}
+
+	// Create a new Container struct to track the container
+	container := &Container{
+		ID:        response.ID,
+		ClientID:  clientID,
+		ImageName: imageName,
+		Status:    StatusRunning,
+		Result:    make(chan interface{}, 1),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// Store the container in our map
+	cm.mu.Lock()
+	cm.containers[container.ID] = container
+	cm.mu.Unlock()
+
+	// Start a goroutine to monitor container output
+	go cm.monitorContainerOutput(container)
+
+	return container, nil
+}
+

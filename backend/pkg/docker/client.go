@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"sync"
+
+	"github.com/ICBasecamp/K0/backend/internal/github"
 	"github.com/ICBasecamp/K0/backend/pkg/s3"
-	"github.com/ICBasecamp/K0/internal/github"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -222,7 +224,98 @@ func (dc *DockerClient) BuildAndStartContainerFromGitHub(imageName string, githu
 
 	// Show container output
 	go func() {
+		// gotta return this somehow instead of printing
 		io.Copy(os.Stdout, startResponse.Result)
+	}()
+
+	return startResponse, nil
+}
+
+// BuildAndStartContainerFromGitHubWS builds a Docker container from a GitHub repository and starts/returns a websocket connection to the container output
+func (dc *DockerClient) BuildAndStartContainerFromGitHubWS(imageName string, githubURL string, ContainerStreams *sync.Map) (TerminalResponse, error) {
+	// Create a git client
+	gitClient, err := github.NewGitClient("")
+	if err != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to create git client: %w", err)
+	}
+
+	// Clone the repository
+	repoPath, err := gitClient.CloneRepository(githubURL)
+	if err != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to clone repository: %w", err)
+	}
+	defer gitClient.CleanupRepository(repoPath) // Clean up after ourselves
+
+	// Find Dockerfile in the cloned repository
+	dockerfilePath, err := gitClient.FindDockerfile(repoPath)
+	if err != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to find Dockerfile in %s: %w", repoPath, err)
+	}
+
+	localCodePath := "code_context.tar.gz"
+	localCodeFile, err := os.Create(localCodePath)
+	if err != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to create local code file %s: %w", localCodePath, err)
+	}
+	defer localCodeFile.Close() // Clean up after ourselves
+
+	// Create pipe for tar stream
+	pr, pw := io.Pipe()
+
+	multiWriter := io.MultiWriter(localCodeFile, pw)
+	tarErrChan := make(chan error, 1)
+
+	// Stream the build context (which is the directory of the Dockerfile)
+	go func() {
+		var tarErr error
+		defer func() {
+			pw.CloseWithError(tarErr)
+			tarErrChan <- tarErr
+		}()
+
+		// Using the multiWriter, we can write to both the local file and the pipe
+		tarErr = gitClient.PrepareDockerBuildContext(dockerfilePath, multiWriter)
+		if tarErr != nil {
+			fmt.Fprintf(os.Stderr, "Error preparing Docker build context from %s: %v\n", filepath.Dir(dockerfilePath), tarErr)
+		}
+	}()
+
+	// Build the image
+	buildOptions := types.ImageBuildOptions{
+		Tags:       []string{imageName},
+		Dockerfile: filepath.Base(dockerfilePath), // Dockerfile name relative to the context (its own dir)
+		Remove:     true,
+	}
+
+	response, buildErr := dc.cli.ImageBuild(dc.ctx, pr, buildOptions)
+	tarringErr := <-tarErrChan // Wait for the tarring goroutine to finish and get its error status
+
+	if tarringErr != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to prepare and write Docker build context: %w (docker build error: %v)", tarringErr, buildErr)
+	}
+
+	if buildErr != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to build image using Dockerfile %s: %w", dockerfilePath, buildErr)
+	}
+
+	// fmt.Println("Image built successfully to ", imageName)
+
+	// Show build output
+	// io.Copy(os.Stdout, response.Body)
+	defer response.Body.Close()
+
+	// Start the container
+	startResponse, err := dc.StartContainer(imageName, false)
+	if err != nil {
+		return TerminalResponse{}, fmt.Errorf("failed to start container %s: %w", imageName, err)
+	}
+
+	fmt.Println("starting container output to image name / websocket connection name: ", imageName)
+
+	// Show container output
+	go func() {
+		// gotta return this somehow instead of printing
+		ContainerStreams.Store(imageName, startResponse.Result)
 	}()
 
 	return startResponse, nil

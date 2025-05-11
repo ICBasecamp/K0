@@ -2,13 +2,17 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
-	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ICBasecamp/K0/backend/pkg/container"
 	"github.com/ICBasecamp/K0/backend/pkg/docker"
 	"github.com/ICBasecamp/K0/backend/pkg/s3"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/websocket/v2"
 )
 
 func main() {
@@ -24,101 +28,135 @@ func main() {
 		log.Fatalf("Failed to create Docker client: %v", err)
 	}
 
-	// Upload test Dockerfiles to S3 if they don't exist
-	testImages := []string{"test-image-1", "test-image-2", "test-image-3"}
-	for _, image := range testImages {
-		s3Key := fmt.Sprintf("dockerfiles/%s.tar", image)
-
-		// Check if file exists in S3
-		exists, err := s3c.FileExists(s3Key)
-		if err != nil {
-			log.Printf("Error checking file existence: %v", err)
-			continue
-		}
-
-		if exists {
-			log.Printf("File %s already exists in S3, skipping upload", s3Key)
-			continue
-		}
-
-		buildContextPath := filepath.Join("test-script", image)
-		if err := s3c.TarAndUploadToS3(s3Key, buildContextPath); err != nil {
-			log.Printf("Failed to upload %s to S3: %v", image, err)
-			continue
-		}
-		log.Printf("Successfully uploaded %s to S3", image)
-	}
-
 	// Create container manager
 	cm := container.NewContainerManager(dc, s3c)
 
-	// Create job queue with 5 workers
-	queue := container.NewJobQueue(cm, 5)
-	defer queue.Stop()
+	var ContainerStreams = sync.Map{}
 
-	// Simulate multiple clients
-	clients := []string{"client1", "client2", "client3"}
-	images := []string{"test-image-1", "test-image-2", "test-image-3"}
+	app := fiber.New(fiber.Config{
+		ReadBufferSize:  1024 * 1024, 
+		WriteBufferSize: 1024 * 1024,
+		BodyLimit:       10 * 1024 * 1024,
+	})
 
-	// Create containers for each client
-	for i, clientID := range clients {
-		// Create a job to create a container
-		s3Key := fmt.Sprintf("dockerfiles/%s.tar", images[i])
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "http://localhost:3000",
+		AllowHeaders: "Origin, Content-Type, Accept, Connection, Upgrade",
+		AllowMethods: "GET, POST, OPTIONS",
+	}))
 
-		job := &container.Job{
-			Type:             container.JobTypeCreate,
-			ClientID:         clientID,
-			ImageName:        images[i],
-			BuildContextPath: s3Key,
-			Result:           make(chan interface{}, 1),
-			Error:            make(chan error, 1),
-			CreatedAt:        time.Now(),
+	app.Use(func(c *fiber.Ctx) error {
+		log.Println("➡️", c.Method(), c.Path())
+		return c.Next()
+	})
+
+	app.Use("/ws/*", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Set("Access-Control-Allow-Origin", "http://localhost:3000")
+			c.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Connection, Upgrade")
+			return c.Next()
 		}
+		return c.Next()
+	})
 
-		// Enqueue the job
-		if err := queue.Enqueue(job); err != nil {
-			log.Printf("Failed to enqueue job for client %s: %v", clientID, err)
-			continue
-		}
+	// test ws connection
+	app.Get("/ws/test", websocket.New(func(c *websocket.Conn) {
+		defer c.Close()
+		log.Println("✅ WS connected to /ws/test")
 
-		// Wait for result
-		select {
-		case result := <-job.Result:
-			container := result.(*container.Container)
-			fmt.Printf("Client %s: Container created with ID %s\n", clientID, container.ID)
-		case err := <-job.Error:
-			log.Printf("Client %s: Error creating container: %v", clientID, err)
-		case <-time.After(10 * time.Second):
-			log.Printf("Client %s: Timeout waiting for container creation", clientID)
-		}
-	}
-
-	// Wait a bit to see the containers running
-	time.Sleep(5 * time.Second)
-
-	// Stop all containers
-	for _, clientID := range clients {
-		containers := cm.ListClientContainers(clientID)
-		for _, c := range containers {
-			job := &container.Job{
-				Type:        container.JobTypeStop,
-				ClientID:    clientID,
-				ContainerID: c.ID,
-				Error:       make(chan error, 1),
-				CreatedAt:   time.Now(),
-			}
-
-			if err := queue.Enqueue(job); err != nil {
-				log.Printf("Failed to enqueue stop job for container %s: %v", c.ID, err)
-				continue
-			}
-
-			select {
-			case err := <-job.Error:
-				log.Printf("Error stopping container %s: %v", c.ID, err)
-			case <-time.After(5 * time.Second):
-				log.Printf("Timeout stopping container %s", c.ID)
+		for {
+			time.Sleep(time.Second)
+			if err := c.WriteMessage(websocket.TextMessage, []byte("ping")); err != nil {
+				log.Println("Write error:", err)
+				break
 			}
 		}
-	}
+	}))
+	
+
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendString("testing")
+	})
+
+	app.Post("/start-github-container", func(c *fiber.Ctx) error {
+		type RequestBody struct {
+			RoomID     string `json:"room_id"`
+			GitHubLink string `json:"github_link"`
+		}
+
+		var requestBody RequestBody
+		if err := c.BodyParser(&requestBody); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid request body",
+			})
+		}
+
+		if requestBody.RoomID == "" || requestBody.GitHubLink == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Room ID and GitHub link are required",
+			})
+		}
+
+		// create unique image name based on room id and timestamp
+		// we use imagename as ws connection name, but container id is still required for stopping and removing the container
+		imageName := fmt.Sprintf("github-container-%s-%d", requestBody.RoomID, time.Now().Unix())
+
+		container, err := cm.CreateContainerFromGitHubWS(requestBody.RoomID, imageName, requestBody.GitHubLink, &ContainerStreams)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fmt.Sprintf("Failed to create container: %v", err),
+			})
+		}
+
+		log.SetFlags(log.LstdFlags | log.Lshortfile)
+		log.Println("Starting GitHub container...")
+		log.Printf("Container created successfully with ID: %s", container.ID)
+
+		// Sleep for 5 seconds to allow container to start up
+		time.Sleep(5 * time.Second)
+
+		// Return the WebSocket connection name immediately
+		return c.JSON(fiber.Map{
+			"ws_connection_name": imageName,
+			"container_id":       container.ID,
+		})
+	})
+
+
+	app.Use("/ws/container-output/:id", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			c.Set("Access-Control-Allow-Origin", "*") // Allow frontend origin here
+			c.Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept")
+			return c.Next()
+		}
+		return fiber.ErrUpgradeRequired
+	})
+
+	app.Get("/ws/container-output/:id", websocket.New(func(c *websocket.Conn) {
+		id := c.Params("id")
+		log.Println("Websocket connection established for ID:", id)
+
+		streamRaw, ok := ContainerStreams.Load(id)
+		if !ok {
+			c.WriteMessage(websocket.TextMessage, []byte("Invalid container ID"))
+			return
+		}
+
+		stream := streamRaw.(io.ReadCloser)
+		defer stream.Close()
+
+		buf := make([]byte, 1024)
+		for {
+			n, err := stream.Read(buf)
+			if err != nil {
+				break
+			}
+			if writeErr := c.WriteMessage(websocket.TextMessage, buf[:n]); writeErr != nil {
+				break
+			}
+		}
+
+	}))
+
+	app.Listen(":3009")
 }
