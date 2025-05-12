@@ -4,8 +4,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"time"
+	"unicode"
+	"encoding/json"
+	"strings"
+
 
 	"github.com/ICBasecamp/K0/backend/pkg/container"
 	"github.com/ICBasecamp/K0/backend/pkg/docker"
@@ -13,9 +18,22 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/websocket/v2"
+
+	"github.com/joho/godotenv"
+	"github.com/supabase-community/supabase-go"
+)
+
+var (
+	ContainerStreams = sync.Map{}
+	supabaseClient   *supabase.Client
 )
 
 func main() {
+	err := godotenv.Load("../../.env")
+	if err != nil {
+		log.Fatalf("Failed to load .env file: %v", err)
+	}
+
 	// Create S3 client
 	s3c, err := s3.CreateS3Client()
 	if err != nil {
@@ -31,10 +49,15 @@ func main() {
 	// Create container manager
 	cm := container.NewContainerManager(dc, s3c)
 
-	var ContainerStreams = sync.Map{}
+	// Create supabase client
+	var supabaseErr error
+	supabaseClient, supabaseErr = supabase.NewClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_ANON_KEY"), &supabase.ClientOptions{})
+	if supabaseErr != nil {
+		log.Fatalf("Failed to initialize Supabase client: %v", supabaseErr)
+	}
 
 	app := fiber.New(fiber.Config{
-		ReadBufferSize:  1024 * 1024, 
+		ReadBufferSize:  1024 * 1024,
 		WriteBufferSize: 1024 * 1024,
 		BodyLimit:       10 * 1024 * 1024,
 	})
@@ -45,10 +68,6 @@ func main() {
 		AllowMethods: "GET, POST, OPTIONS",
 	}))
 
-	app.Use(func(c *fiber.Ctx) error {
-		log.Println("➡️", c.Method(), c.Path())
-		return c.Next()
-	})
 
 	app.Use("/ws/*", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -72,7 +91,6 @@ func main() {
 			}
 		}
 	}))
-	
 
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.SendString("testing")
@@ -122,7 +140,6 @@ func main() {
 		})
 	})
 
-
 	app.Use("/ws/container-output/:id", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
 			c.Set("Access-Control-Allow-Origin", "*") // Allow frontend origin here
@@ -132,8 +149,16 @@ func main() {
 		return fiber.ErrUpgradeRequired
 	})
 
+	// encode websocket connection id and room id by separating with "___"
 	app.Get("/ws/container-output/:id", websocket.New(func(c *websocket.Conn) {
-		id := c.Params("id")
+		params := c.Params("id")
+		parts := strings.Split(params, "___")
+		if len(parts) != 2 {
+			c.WriteMessage(websocket.TextMessage, []byte("Invalid parameters"))
+			return
+		}
+		id := parts[0]
+		roomId := parts[1]
 		log.Println("Websocket connection established for ID:", id)
 
 		streamRaw, ok := ContainerStreams.Load(id)
@@ -154,9 +179,42 @@ func main() {
 			if writeErr := c.WriteMessage(websocket.TextMessage, buf[:n]); writeErr != nil {
 				break
 			}
-		}
 
+			currentTerminalOutput, _, err := supabaseClient.From("running_rooms").Select("terminal_output", "", false).Eq("id", roomId).Single().Execute()
+			if err != nil {
+				log.Printf("Error getting terminal output: %v", err)
+			}
+			var result struct {
+				TerminalOutput string `json:"terminal_output"`
+			}
+			if err := json.Unmarshal(currentTerminalOutput, &result); err != nil {
+				log.Printf("Error parsing terminal output: %v", err)
+				continue
+			}
+			newOutput := result.TerminalOutput + filterPrintable(buf[:n])			
+
+			// update running_rooms table with terminal_output
+			_, _, err = supabaseClient.From("running_rooms").Update(
+				map[string]any{"terminal_output": newOutput},
+				"",
+				"",
+			).Eq("id", roomId).Execute() // Use the actual room ID from the connection
+
+			if err != nil {
+				log.Printf("Error updating terminal output: %v", err)
+			}
+		}
 	}))
 
 	app.Listen(":3009")
+}
+
+func filterPrintable(input []byte) string {
+	out := make([]rune, 0, len(input))
+	for _, r := range string(input) {
+		if unicode.IsPrint(r) || r == '\n' || r == '\r' || r == '\t' {
+			out = append(out, r)
+		}
+	}
+	return string(out)
 }
