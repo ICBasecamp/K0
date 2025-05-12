@@ -88,7 +88,7 @@ const ImportRepository = ({ currentLogs, setLogs, setIsContainerStarting, isCont
                                         // we need to fix detecting if the ws connection exists, checking for socket null not working
                                         
                                         // @ts-ignore
-                                        setLogs(prevLogs => prevLogs + e.data + "\n")
+                                        // setLogs(prevLogs => prevLogs + e.data + "\n")
                                     };
                                 
                                     ws.onclose = (event: CloseEvent) => {
