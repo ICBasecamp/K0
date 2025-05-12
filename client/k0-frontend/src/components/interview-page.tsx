@@ -160,7 +160,7 @@ export const InterviewPage = ({ roomId }: { roomId: string }) => {
                     return;
                 }
                 setLogs(payload.new.terminal_output)
-                console.log('Room updated:', payload);
+                // console.log('Room updated:', payload);
             }
         )
         .subscribe()
