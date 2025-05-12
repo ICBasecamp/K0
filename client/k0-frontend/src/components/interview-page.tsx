@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 import { Terminal } from "./console";
 import { Card, CardContent } from "./ui/card";
 import { Input } from "./ui/input";
+import { createClient} from "@/utils/supabase/client";
 
 type Repository = {
     name: string;
@@ -13,13 +14,15 @@ type Repository = {
     author_image_url: string;
 }
 
-const ImportRepository = ({ currentLogs, setLogs, setIsContainerStarting, isContainerStarting }: { 
+const ImportRepository = ({ currentLogs, setLogs, setIsContainerStarting, isContainerStarting, roomId, setSocket }: { 
     currentLogs: string, 
     setLogs: (logs: string) => void, 
     setIsContainerStarting: (isContainerStarting: boolean) => void, 
-    isContainerStarting: boolean }) => {
+    isContainerStarting: boolean,
+    roomId: string,
+    setSocket: (socket: WebSocket | null) => void
+}) => {
     const [githubLinkText, setGithubLinkText] = useState("");  
-    const [socket, setSocket] = useState<WebSocket | null>(null);
     const [currentRepository, setCurrentRepository] = useState<Repository | null>(null);
 
     return (
@@ -68,7 +71,7 @@ const ImportRepository = ({ currentLogs, setLogs, setIsContainerStarting, isCont
                                     const wsConnectionName = res.data.ws_connection_name
                                     console.log("Connecting to WebSocket with name:", wsConnectionName)
                                     
-                                    const wsUrl = `ws://localhost:3009/ws/container-output/${wsConnectionName}`
+                                    const wsUrl = `ws://localhost:3009/ws/container-output/${wsConnectionName}___${roomId}`
                                     console.log("WebSocket URL:", wsUrl)
                                     
                                     const ws = new WebSocket(wsUrl);
@@ -79,9 +82,13 @@ const ImportRepository = ({ currentLogs, setLogs, setIsContainerStarting, isCont
                                     };
 
                                     ws.onmessage = (e: MessageEvent) => {
+
+                                        // TODO: temporary fix, we want to setLogs directly from the payload if the ws connection exists
+                                        // otherwise read from realtime db
+                                        // we need to fix detecting if the ws connection exists, checking for socket null not working
                                         
                                         // @ts-ignore
-                                        setLogs(prevLogs => prevLogs + e.data + "\n")
+                                        // setLogs(prevLogs => prevLogs + e.data + "\n")
                                     };
                                 
                                     ws.onclose = (event: CloseEvent) => {
@@ -137,6 +144,49 @@ export const Header = ({ roomId }: { roomId: string }) => {
 export const InterviewPage = ({ roomId }: { roomId: string }) => {
     const [logs, setLogs] = useState("");
     const [isContainerStarting, setIsContainerStarting] = useState(false);
+    const [socket, setSocket] = useState<WebSocket | null>(null);
+
+    const supabase = createClient();
+
+
+    useEffect(() => {
+
+        const channel = supabase.channel('room-updates')
+        .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'running_rooms', filter: `id=eq.${roomId}` },
+            (payload) => {
+                if (socket) {
+                    return;
+                }
+                setLogs(payload.new.terminal_output)
+                // console.log('Room updated:', payload);
+            }
+        )
+        .subscribe()
+
+        return () => {
+            supabase.removeChannel(channel)
+        }
+
+        // same impl. using broadcast channels
+        // console.log(`topic:${roomId}`);
+        // const changes = supabase
+        //     .channel(`topic:${roomId}`, {
+        //         config: { 
+        //             private: true,
+        //             broadcast: { self: true },
+        //         },
+        //     })
+        //     .on('broadcast', { event: 'INSERT' }, (payload) => console.log("INSERT", payload))
+        //     .on('broadcast', { event: 'UPDATE' }, (payload) => console.log(payload))
+        //     .on('broadcast', { event: 'DELETE' }, (payload) => console.log(payload))
+        //     .subscribe()
+
+        // return () => {
+        //     supabase.removeChannel(changes)
+        // }
+    }, [roomId, supabase])
 
     return (
         <div className="flex flex-col h-screen w-screen">
@@ -144,7 +194,7 @@ export const InterviewPage = ({ roomId }: { roomId: string }) => {
             <div className="grid grid-cols-5 items-center justify-center h-full">
                 <div className="col-span-2 flex flex-col h-full bg-neutral-950 border-r border-neutral-800">
                     <div className="flex flex-col p-8">
-                        <ImportRepository currentLogs={logs} setLogs={setLogs} setIsContainerStarting={setIsContainerStarting} isContainerStarting={isContainerStarting} />
+                        <ImportRepository setSocket={setSocket} currentLogs={logs} setLogs={setLogs} setIsContainerStarting={setIsContainerStarting} isContainerStarting={isContainerStarting} roomId={roomId} />
                     </div>
                 </div>
                 <div className="h-full col-span-3 p-4 bg-neutral-900">
