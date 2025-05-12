@@ -40,43 +40,42 @@ type ContainerManager struct {
 }
 
 // NewContainerManager creates a new container manager instance
-func NewContainerManager(dockerClient *docker.DockerClient, s3Client *s3.S3Client) *ContainerManager {
+func NewContainerManager(dockerClient *docker.DockerClient) *ContainerManager {
 	return &ContainerManager{
 		dockerClient: dockerClient,
-		s3Client:     s3Client,
 		containers:   make(map[string]*Container),
 	}
 }
 
-// CreateContainer creates a new Docker container for a specific client
-func (cm *ContainerManager) CreateContainer(clientID, imageName, buildContextPath string) (*Container, error) {
-	// Start a container using the Docker client
-	response, err := cm.dockerClient.BuildAndStartContainer(imageName, buildContextPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create container: %w", err)
-	}
+// CreateContainer creates a new Docker container for a specific client using S3 (deprecated)
+// func (cm *ContainerManager) CreateContainer(clientID, imageName, buildContextPath string) (*Container, error) {
+// 	// Start a container using the Docker client
+// 	response, err := cm.dockerClient.BuildAndStartContainer(imageName, buildContextPath)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to create container: %w", err)
+// 	}
 
-	// Create a new Container struct to track the container
-	container := &Container{
-		ID:        response.ID,
-		ClientID:  clientID,
-		ImageName: imageName,
-		Status:    StatusRunning,
-		Result:    make(chan interface{}, 1),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
+// 	// Create a new Container struct to track the container
+// 	container := &Container{
+// 		ID:        response.ID,
+// 		ClientID:  clientID,
+// 		ImageName: imageName,
+// 		Status:    StatusRunning,
+// 		Result:    make(chan interface{}, 1),
+// 		CreatedAt: time.Now(),
+// 		UpdatedAt: time.Now(),
+// 	}
 
-	// Store the container in our map
-	cm.mu.Lock()
-	cm.containers[container.ID] = container
-	cm.mu.Unlock()
+// 	// Store the container in our map
+// 	cm.mu.Lock()
+// 	cm.containers[container.ID] = container
+// 	cm.mu.Unlock()
 
-	// Start a goroutine to monitor container output
-	go cm.monitorContainerOutput(container)
+// 	// Start a goroutine to monitor container output
+// 	go cm.monitorContainerOutput(container)
 
-	return container, nil
-}
+// 	return container, nil
+// }
 
 // GetContainer retrieves a container by its ID
 func (cm *ContainerManager) GetContainer(id string) (*Container, error) {

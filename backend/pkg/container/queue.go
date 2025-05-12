@@ -19,14 +19,14 @@ const (
 
 // Job represents a container operation to be processed
 type Job struct {
-	Type             JobType          // Type of operation to perform
-	ClientID         string           // ID of the client requesting the operation
-	ImageName        string           // Name of the Docker image to use
-	ContainerID      string           // ID of the container to operate on
-	BuildContextPath string           // Path to the build context directory
-	Result           chan interface{} // Channel to receive operation results
-	Error            chan error       // Channel to receive operation errors
-	CreatedAt        time.Time        // When the job was created
+	Type        JobType          // Type of operation to perform
+	ClientID    string           // ID of the client requesting the operation
+	ImageName   string           // Name of the Docker image to use
+	ContainerID string           // ID of the container to operate on
+	GitHubURL   string           // URL of the GitHub repository
+	Result      chan interface{} // Channel to receive operation results
+	Error       chan error       // Channel to receive operation errors
+	CreatedAt   time.Time        // When the job was created
 }
 
 // JobQueue manages a pool of workers that process container operations
@@ -82,8 +82,8 @@ func (q *JobQueue) worker() {
 			// Process different types of jobs
 			switch job.Type {
 			case JobTypeCreate:
-				// Create a new container
-				container, err := q.manager.CreateContainer(job.ClientID, job.ImageName, job.BuildContextPath)
+				// Create a new container from GitHub
+				container, err := q.manager.CreateContainerFromGitHub(job.ClientID, job.ImageName, job.GitHubURL)
 				if err != nil {
 					job.Error <- err
 					continue

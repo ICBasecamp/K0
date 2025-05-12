@@ -1,7 +1,6 @@
 package github
 
 import (
-	"archive/tar"
 	"fmt"
 	"io"
 	"os"
@@ -50,8 +49,8 @@ func (gc *GitClient) CloneRepository(repoURL string) (string, error) {
 		return "", fmt.Errorf("failed to create clone directory: %w", err)
 	}
 
-	// Clone the repository
-	cmd := exec.Command("git", "clone", repoURL, cloneDir)
+	// Clone the repository with --depth 1 for faster cloning
+	cmd := exec.Command("git", "clone", "--depth", "1", repoURL, cloneDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git clone failed: %s: %w", string(output), err)
@@ -85,62 +84,33 @@ func (gc *GitClient) FindDockerfile(repoPath string) (string, error) {
 // PrepareDockerBuildContext creates a tar archive from the directory containing the Dockerfile.
 // dockerfilePath should be the absolute path to the Dockerfile.
 func (gc *GitClient) PrepareDockerBuildContext(dockerfilePath string, writer io.Writer) error {
-	// Get the directory containing the Dockerfile. This will be the root of our tar archive.
+	// Get the directory containing the Dockerfile
 	dockerfileDir := filepath.Dir(dockerfilePath)
 
-	// Create a new tar writer
-	tw := tar.NewWriter(writer)
-	defer tw.Close()
+	// Create git archive command
+	cmd := exec.Command("git", "archive", "--format=tar", "HEAD")
+	cmd.Dir = dockerfileDir // Set the working directory to the repository root
 
-	// Walk through the directory containing the Dockerfile
-	err := filepath.Walk(dockerfileDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Create tar header
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return fmt.Errorf("failed to create tar header: %w", err)
-		}
-
-		// Get the relative path from the dockerfileDir to the current file/dir
-		relPath, err := filepath.Rel(dockerfileDir, path)
-		if err != nil {
-			return fmt.Errorf("failed to get relative path: %w", err)
-		}
-
-		// If relPath is ".", it's the dockerfileDir itself, which we don't need to add as a separate entry.
-		if relPath == "." {
-			return nil
-		}
-
-		// Update the header name to use forward slashes and relative path
-		header.Name = strings.ReplaceAll(relPath, "\\", "/")
-
-		// Write the header
-		if err := tw.WriteHeader(header); err != nil {
-			return fmt.Errorf("failed to write tar header: %w", err)
-		}
-
-		// If it's a regular file, write its contents
-		if info.Mode().IsRegular() {
-			file, err := os.Open(path)
-			if err != nil {
-				return fmt.Errorf("failed to open file: %w", err)
-			}
-			defer file.Close()
-
-			if _, err := io.Copy(tw, file); err != nil {
-				return fmt.Errorf("failed to write file contents to tar: %w", err)
-			}
-		}
-
-		return nil
-	})
-
+	// Create a pipe to capture the output
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create tar archive from %s: %w", dockerfileDir, err)
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start git archive: %w", err)
+	}
+
+	// Copy the git archive output to our writer
+	if _, err := io.Copy(writer, stdout); err != nil {
+		cmd.Wait() // Clean up the command
+		return fmt.Errorf("failed to copy git archive output: %w", err)
+	}
+
+	// Wait for the command to complete
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("git archive failed: %w", err)
 	}
 
 	return nil
