@@ -14,7 +14,6 @@ import (
 
 	"github.com/ICBasecamp/K0/backend/pkg/container"
 	"github.com/ICBasecamp/K0/backend/pkg/docker"
-	"github.com/ICBasecamp/K0/backend/pkg/s3"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/websocket/v2"
@@ -34,20 +33,14 @@ func main() {
 		log.Fatalf("Failed to load .env file: %v", err)
 	}
 
-	// Create S3 client
-	s3c, err := s3.CreateS3Client()
-	if err != nil {
-		log.Fatalf("Failed to create S3 client: %v", err)
-	}
-
 	// Create Docker client
-	dc, err := docker.CreateDockerClient(s3c)
+	dc, err := docker.CreateDockerClient()
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v", err)
 	}
 
 	// Create container manager
-	cm := container.NewContainerManager(dc, s3c)
+	cm := container.NewContainerManager(dc)
 
 	// Create supabase client
 	var supabaseErr error
