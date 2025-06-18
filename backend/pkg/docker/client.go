@@ -6,6 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"log"
+	"encoding/json"
+	"unicode"
+
 
 	"sync"
 
@@ -18,6 +22,8 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+
+	"github.com/supabase-community/supabase-go"
 )
 
 type DockerClient struct {
@@ -289,7 +295,7 @@ func (dc *DockerClient) Cleanup() error {
 }
 
 // BuildAndStartContainerFromGitHubWS builds a Docker container from a GitHub repository and starts/returns a websocket connection to the container output
-func (dc *DockerClient) BuildAndStartContainerFromGitHubWS(imageName string, githubURL string, ContainerStreams *sync.Map) (TerminalResponse, error) {
+func (dc *DockerClient) BuildAndStartContainerFromGitHubWS_OLD(imageName string, githubURL string, ContainerStreams *sync.Map) (TerminalResponse, error) {
 	// Create a git client
 	gitClient, err := github.NewGitClient("")
 	if err != nil {
@@ -377,6 +383,154 @@ func (dc *DockerClient) BuildAndStartContainerFromGitHubWS(imageName string, git
 
 	return startResponse, nil
 }
+
+
+func filterPrintable(input []byte) string {
+	out := make([]rune, 0, len(input))
+	for _, r := range string(input) {
+		if unicode.IsPrint(r) || r == '\n' || r == '\r' || r == '\t' {
+			out = append(out, r)
+		}
+	}
+	return string(out)
+}
+
+
+func (dc *DockerClient) StreamContainerToSupabase(imageName string, githubURL string, roomId string, ContainerStreams *sync.Map, supabaseClient *supabase.Client) (TerminalResponse, error) {
+	// Create a git client
+	gitClient, err := github.NewGitClient("")
+	if err != nil {
+		dc.Cleanup()
+		return TerminalResponse{}, fmt.Errorf("failed to create git client: %w", err)
+	}
+
+	// Clone the repository
+	repoPath, err := gitClient.CloneRepository(githubURL)
+	if err != nil {
+		dc.Cleanup()
+		return TerminalResponse{}, fmt.Errorf("failed to clone repository: %w", err)
+	}
+	defer gitClient.CleanupRepository(repoPath)
+
+	// Find Dockerfile in the cloned repository
+	dockerfilePath, err := gitClient.FindDockerfile(repoPath)
+	if err != nil {
+		dc.Cleanup()
+		return TerminalResponse{}, fmt.Errorf("failed to find Dockerfile in %s: %w", repoPath, err)
+	}
+
+	// Create pipe for tar stream
+	pr, pw := io.Pipe()
+
+	// Create a channel to signal when tarring is complete
+	tarDone := make(chan error, 1)
+
+	// Start tarring in a goroutine
+	go func() {
+		// Write the tar archive
+		err := gitClient.PrepareDockerBuildContext(dockerfilePath, pw)
+		// Signal completion before closing the pipe
+		tarDone <- err
+		// Only close the pipe after we've signaled completion
+		if err != nil {
+			pw.CloseWithError(err)
+		} else {
+			pw.Close()
+		}
+	}()
+
+	// Build the image
+	buildOptions := types.ImageBuildOptions{
+		Tags:       []string{imageName},
+		Dockerfile: filepath.Base(dockerfilePath),
+		Remove:     true,
+	}
+
+	// Start the build
+	response, buildErr := dc.cli.ImageBuild(dc.ctx, pr, buildOptions)
+
+	// Wait for tarring to complete
+	tarErr := <-tarDone
+
+	// Close the read end of the pipe after we're done reading
+	pr.Close()
+
+	// Check for errors
+	if tarErr != nil {
+		dc.Cleanup()
+		return TerminalResponse{}, fmt.Errorf("failed to prepare Docker build context: %w", tarErr)
+	}
+
+	if buildErr != nil {
+		dc.Cleanup()
+		return TerminalResponse{}, fmt.Errorf("failed to build image: %w", buildErr)
+	}
+
+	fmt.Println("Image built successfully to ", imageName)
+
+	// Show build output
+	io.Copy(os.Stdout, response.Body)
+	defer response.Body.Close()
+
+	// Start the container
+	startResponse, err := dc.StartContainer(imageName, false)
+	if err != nil {
+		dc.Cleanup()
+		return TerminalResponse{}, fmt.Errorf("failed to start container %s: %w", imageName, err)
+	}
+
+	fmt.Println("starting container output to image name / websocket connection name: ", imageName)
+
+	// Show container output
+	go func() {
+		// gotta return this somehow instead of printing
+		io.Copy(os.Stdout, startResponse.Result)
+		streamRaw, ok := ContainerStreams.Load(imageName)
+		if !ok {
+			return
+		}
+
+		stream := streamRaw.(io.ReadCloser)
+		defer stream.Close()
+
+		buf := make([]byte, 1024)
+		for {
+			n, err := stream.Read(buf)
+			if err != nil {
+				break
+			}
+
+			currentTerminalOutput, _, err := supabaseClient.From("running_rooms").Select("terminal_output", "", false).Eq("id", roomId).Single().Execute()
+			if err != nil {
+				log.Printf("Error getting terminal output: %v", err)
+			}
+			var result struct {
+				TerminalOutput string `json:"terminal_output"`
+			}
+			if err := json.Unmarshal(currentTerminalOutput, &result); err != nil {
+				log.Printf("Error parsing terminal output: %v", err)
+				continue
+			}
+			newOutput := result.TerminalOutput + filterPrintable(buf[:n])			
+
+			// update running_rooms table with terminal_output
+			_, _, err = supabaseClient.From("running_rooms").Update(
+				map[string]any{"terminal_output": newOutput},
+				"",
+				"",
+			).Eq("id", roomId).Execute() // Use the actual room ID from the connection
+
+			if err != nil {
+				log.Printf("Error updating terminal output: %v", err)
+			}
+		}
+	}()
+
+	return startResponse, nil
+
+}
+
+
 
 // example usage
 // func main() {
