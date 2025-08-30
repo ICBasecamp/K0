@@ -44,6 +44,49 @@ func getAmiIdFromSSM(ctx context.Context, ssmClient *ssm.Client) (string, error)
 }
 
 func CreateDockerClient() (*DockerClient, error) {
+	// Check if we're in local development mode
+	dockerMode := os.Getenv("DOCKER_MODE")
+	if dockerMode == "local" {
+		return createLocalDockerClient()
+	}
+	return createEC2DockerClient()
+}
+
+// createLocalDockerClient creates a Docker client that connects to local Docker daemon
+func createLocalDockerClient() (*DockerClient, error) {
+	fmt.Println("🐳 Using local Docker daemon for development...")
+	
+	// Create Docker client that connects to local Docker daemon
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local Docker client: %w", err)
+	}
+
+	// Try to ping the Docker daemon
+	_, err = cli.Ping(context.Background())
+	if err != nil {
+		cli.Close()
+		return nil, fmt.Errorf("failed to connect to local Docker daemon - make sure Docker Desktop is running: %w", err)
+	}
+
+	fmt.Println("✅ Successfully connected to local Docker daemon!")
+
+	return &DockerClient{
+		cli:        cli,
+		ctx:        context.Background(),
+		ec2Client:  nil, // No EC2 client needed for local mode
+		instanceID: "",  // No instance ID for local mode
+		publicIP:   "",  // No public IP for local mode
+	}, nil
+}
+
+// createEC2DockerClient creates a Docker client that connects to EC2 instance (production)
+func createEC2DockerClient() (*DockerClient, error) {
+	fmt.Println("☁️ Using EC2 Docker daemon for production...")
+	
 	ec2Client, err := ec2.NewEC2Client()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
@@ -173,9 +216,18 @@ func (dc *DockerClient) RemoveContainer(id string) error {
 // Removed BuildAndStartContainerFromGitHub - only used by deprecated container manager
 
 func (dc *DockerClient) Cleanup() error {
-	if dc.instanceID != "" {
+	// Only cleanup EC2 instance if we're using EC2 mode
+	if dc.instanceID != "" && dc.ec2Client != nil {
+		fmt.Println("🧹 Cleaning up EC2 instance...")
 		return dc.ec2Client.TerminateInstance(dc.instanceID)
 	}
+	
+	// For local mode, just close the Docker client
+	if dc.cli != nil {
+		fmt.Println("🧹 Closing local Docker client...")
+		return dc.cli.Close()
+	}
+	
 	return nil
 }
 
