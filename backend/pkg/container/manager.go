@@ -1,3 +1,6 @@
+// DEPRECATED: This package is deprecated in favor of using docker.DockerClient directly
+// for a simplified microservice architecture. Use docker.BuildAndStartContainerFromGitHubWS
+// and other docker methods directly instead of this container management layer.
 package container
 
 import (
@@ -6,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ICBasecamp/K0/backend/pkg/docker"
-	"github.com/ICBasecamp/K0/backend/pkg/s3"
 )
 
 // Container represents a running Docker container with its metadata
@@ -34,7 +36,6 @@ const (
 // ContainerManager handles the lifecycle of Docker containers
 type ContainerManager struct {
 	dockerClient *docker.DockerClient
-	s3Client     *s3.S3Client
 	containers   map[string]*Container
 	mu           sync.RWMutex
 }
@@ -47,35 +48,7 @@ func NewContainerManager(dockerClient *docker.DockerClient) *ContainerManager {
 	}
 }
 
-// CreateContainer creates a new Docker container for a specific client using S3 (deprecated)
-// func (cm *ContainerManager) CreateContainer(clientID, imageName, buildContextPath string) (*Container, error) {
-// 	// Start a container using the Docker client
-// 	response, err := cm.dockerClient.BuildAndStartContainer(imageName, buildContextPath)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to create container: %w", err)
-// 	}
-
-// 	// Create a new Container struct to track the container
-// 	container := &Container{
-// 		ID:        response.ID,
-// 		ClientID:  clientID,
-// 		ImageName: imageName,
-// 		Status:    StatusRunning,
-// 		Result:    make(chan interface{}, 1),
-// 		CreatedAt: time.Now(),
-// 		UpdatedAt: time.Now(),
-// 	}
-
-// 	// Store the container in our map
-// 	cm.mu.Lock()
-// 	cm.containers[container.ID] = container
-// 	cm.mu.Unlock()
-
-// 	// Start a goroutine to monitor container output
-// 	go cm.monitorContainerOutput(container)
-
-// 	return container, nil
-// }
+// Removed deprecated S3-based CreateContainer method
 
 // GetContainer retrieves a container by its ID
 func (cm *ContainerManager) GetContainer(id string) (*Container, error) {
@@ -161,35 +134,7 @@ func (cm *ContainerManager) ListClientContainers(clientID string) []*Container {
 	return clientContainers
 }
 
-// CreateContainerFromGitHub creates a new Docker container from a GitHub repository
-func (cm *ContainerManager) CreateContainerFromGitHub(clientID, imageName, githubURL string) (*Container, error) {
-	// Start a container using the Docker client with GitHub repository
-	response, err := cm.dockerClient.BuildAndStartContainerFromGitHub(imageName, githubURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create container from GitHub: %w", err)
-	}
-
-	// Create a new Container struct to track the container
-	container := &Container{
-		ID:        response.ID,
-		ClientID:  clientID,
-		ImageName: imageName,
-		Status:    StatusRunning,
-		Result:    make(chan interface{}, 1),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	// Store the container in our map
-	cm.mu.Lock()
-	cm.containers[container.ID] = container
-	cm.mu.Unlock()
-
-	// Start a goroutine to monitor container output
-	go cm.monitorContainerOutput(container)
-
-	return container, nil
-}
+// Removed deprecated CreateContainerFromGitHub method - use CreateContainerFromGitHubWS instead
 
 func (cm *ContainerManager) CreateContainerFromGitHubWS(clientID, imageName, githubURL string, ContainerStreams *sync.Map) (*Container, error) {
 	// Start a container using the Docker client with GitHub repository
@@ -219,4 +164,3 @@ func (cm *ContainerManager) CreateContainerFromGitHubWS(clientID, imageName, git
 
 	return container, nil
 }
-

@@ -1,3 +1,5 @@
+// DEPRECATED: This package is deprecated in favor of using docker.DockerClient directly
+// for a simplified microservice architecture.
 package container
 
 import (
@@ -82,8 +84,8 @@ func (q *JobQueue) worker() {
 			// Process different types of jobs
 			switch job.Type {
 			case JobTypeCreate:
-				// Create a new container from GitHub
-				container, err := q.manager.CreateContainerFromGitHub(job.ClientID, job.ImageName, job.GitHubURL)
+				// Create a new container from GitHub (WebSocket version)
+				container, err := q.manager.CreateContainerFromGitHubWS(job.ClientID, job.ImageName, job.GitHubURL, nil)
 				if err != nil {
 					job.Error <- err
 					continue
