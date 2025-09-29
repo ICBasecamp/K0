@@ -44,6 +44,47 @@ func getAmiIdFromSSM(ctx context.Context, ssmClient *ssm.Client) (string, error)
 }
 
 func CreateDockerClient() (*DockerClient, error) {
+	// Check if we should use local Docker (no AWS)
+	useLocalDocker := os.Getenv("USE_LOCAL_DOCKER")
+	if useLocalDocker == "true" {
+		return createLocalDockerClient()
+	}
+	
+	// Default to AWS EC2 setup
+	return createEC2DockerClient()
+}
+
+func createLocalDockerClient() (*DockerClient, error) {
+	fmt.Println("Using local Docker daemon...")
+	
+	// Create Docker client that connects to local Docker daemon
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local Docker client: %w", err)
+	}
+
+	// Try to ping the Docker daemon
+	_, err = cli.Ping(context.Background())
+	if err != nil {
+		cli.Close()
+		return nil, fmt.Errorf("failed to connect to local Docker daemon. Make sure Docker Desktop is running: %w", err)
+	}
+
+	fmt.Println("Successfully connected to local Docker daemon!")
+
+	return &DockerClient{
+		cli:        cli,
+		ctx:        context.Background(),
+		ec2Client:  nil, // No EC2 client needed for local
+		instanceID: "",  // No instance ID for local
+		publicIP:   "",  // No public IP for local
+	}, nil
+}
+
+func createEC2DockerClient() (*DockerClient, error) {
 	ec2Client, err := ec2.NewEC2Client()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
@@ -173,7 +214,7 @@ func (dc *DockerClient) RemoveContainer(id string) error {
 // Removed BuildAndStartContainerFromGitHub - only used by deprecated container manager
 
 func (dc *DockerClient) Cleanup() error {
-	if dc.instanceID != "" {
+	if dc.ec2Client != nil && dc.instanceID != "" {
 		return dc.ec2Client.TerminateInstance(dc.instanceID)
 	}
 	return nil
