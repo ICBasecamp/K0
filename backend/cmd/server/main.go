@@ -1,20 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"unicode"
-	"encoding/json"
-	"strings"
 
-
-	"github.com/ICBasecamp/K0/backend/pkg/container"
 	"github.com/ICBasecamp/K0/backend/pkg/docker"
-	"github.com/ICBasecamp/K0/backend/pkg/s3"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/websocket/v2"
@@ -26,35 +23,35 @@ import (
 var (
 	ContainerStreams = sync.Map{}
 	supabaseClient   *supabase.Client
+	dockerClient     *docker.DockerClient
 )
 
 func main() {
-	err := godotenv.Load("../../.env")
+	log.Println("Starting K0 backend server...")
+	err := godotenv.Load("../../../.env")
 	if err != nil {
 		log.Fatalf("Failed to load .env file: %v", err)
 	}
+	log.Println("Environment file loaded successfully")
 
-	// Create S3 client
-	s3c, err := s3.CreateS3Client()
-	if err != nil {
-		log.Fatalf("Failed to create S3 client: %v", err)
-	}
+	// S3 client removed - no longer needed for simplified Docker service
 
 	// Create Docker client
-	dc, err := docker.CreateDockerClient(s3c)
+	log.Println("Creating Docker client...")
+	dockerClient, err = docker.CreateDockerClient()
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v", err)
 	}
-
-	// Create container manager
-	cm := container.NewContainerManager(dc, s3c)
+	log.Println("Docker client created successfully")
 
 	// Create supabase client
+	log.Println("Initializing Supabase client...")
 	var supabaseErr error
 	supabaseClient, supabaseErr = supabase.NewClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_ANON_KEY"), &supabase.ClientOptions{})
 	if supabaseErr != nil {
 		log.Fatalf("Failed to initialize Supabase client: %v", supabaseErr)
 	}
+	log.Println("Supabase client initialized successfully")
 
 	app := fiber.New(fiber.Config{
 		ReadBufferSize:  1024 * 1024,
@@ -67,7 +64,6 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept, Connection, Upgrade",
 		AllowMethods: "GET, POST, OPTIONS",
 	}))
-
 
 	app.Use("/ws/*", func(c *fiber.Ctx) error {
 		if websocket.IsWebSocketUpgrade(c) {
@@ -119,7 +115,8 @@ func main() {
 		// we use imagename as ws connection name, but container id is still required for stopping and removing the container
 		imageName := fmt.Sprintf("github-container-%s-%d", requestBody.RoomID, time.Now().Unix())
 
-		container, err := cm.CreateContainerFromGitHubWS(requestBody.RoomID, imageName, requestBody.GitHubLink, &ContainerStreams)
+		// Create container directly using Docker client - simplified for microservice architecture
+		response, err := dockerClient.BuildAndStartContainerFromGitHubWS(imageName, requestBody.GitHubLink, &ContainerStreams)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": fmt.Sprintf("Failed to create container: %v", err),
@@ -128,7 +125,7 @@ func main() {
 
 		log.SetFlags(log.LstdFlags | log.Lshortfile)
 		log.Println("Starting GitHub container...")
-		log.Printf("Container created successfully with ID: %s", container.ID)
+		log.Printf("Container created successfully with ID: %s", response.ID)
 
 		// Sleep for 5 seconds to allow container to start up
 		time.Sleep(5 * time.Second)
@@ -136,7 +133,7 @@ func main() {
 		// Return the WebSocket connection name immediately
 		return c.JSON(fiber.Map{
 			"ws_connection_name": imageName,
-			"container_id":       container.ID,
+			"container_id":       response.ID,
 		})
 	})
 
@@ -191,7 +188,7 @@ func main() {
 				log.Printf("Error parsing terminal output: %v", err)
 				continue
 			}
-			newOutput := result.TerminalOutput + filterPrintable(buf[:n])			
+			newOutput := result.TerminalOutput + filterPrintable(buf[:n])
 
 			// update running_rooms table with terminal_output
 			_, _, err = supabaseClient.From("running_rooms").Update(
@@ -206,7 +203,10 @@ func main() {
 		}
 	}))
 
-	app.Listen(":3009")
+	log.Println("Starting server on port 3009...")
+	if err := app.Listen(":3009"); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
 
 func filterPrintable(input []byte) string {

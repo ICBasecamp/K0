@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
-	"github.com/ICBasecamp/K0/backend/pkg/container"
 	"github.com/ICBasecamp/K0/backend/pkg/docker"
 	"github.com/joho/godotenv"
 )
@@ -43,32 +43,28 @@ func main() {
 	}
 	log.Println("Docker client created successfully")
 
-	// Create the container manager
-	log.Println("Creating container manager...")
-	containerManager := container.NewContainerManager(dockerClient)
-	log.Println("Container manager created successfully")
-
-	// Create a container from the GitHub repository
+	// Create a container from the GitHub repository directly using Docker client
 	log.Printf("Creating container from GitHub repository: %s", githubURL)
-	container, err := containerManager.CreateContainerFromGitHub("test-client", imageName, githubURL)
+	var containerStreams sync.Map
+	response, err := dockerClient.BuildAndStartContainerFromGitHubWS(imageName, githubURL, &containerStreams)
 	if err != nil {
 		log.Fatalf("Failed to create container: %v", err)
 	}
-	log.Printf("Container created successfully with ID: %s", container.ID)
+	log.Printf("Container created successfully with ID: %s", response.ID)
 
 	// Give the container some time to run
 	log.Println("Waiting for container to run...")
 	time.Sleep(30 * time.Second)
 
-	// Stop and remove the container
+	// Stop and remove the container directly
 	log.Println("Stopping container...")
-	if err := containerManager.StopContainer(container.ID); err != nil {
+	if err := dockerClient.StopContainer(response.ID); err != nil {
 		log.Fatalf("Failed to stop container: %v", err)
 	}
 	log.Println("Container stopped successfully")
 
 	log.Println("Removing container...")
-	if err := containerManager.RemoveContainer(container.ID); err != nil {
+	if err := dockerClient.RemoveContainer(response.ID); err != nil {
 		log.Fatalf("Failed to remove container: %v", err)
 	}
 	log.Println("Container removed successfully")

@@ -33,7 +33,7 @@ type TerminalResponse struct {
 	Result io.ReadCloser
 }
 
-func GetAmiIdFromSSM(ctx context.Context, ssmClient *ssm.Client) (string, error) {
+func getAmiIdFromSSM(ctx context.Context, ssmClient *ssm.Client) (string, error) {
 	param, err := ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 		Name: aws.String("/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"),
 	})
@@ -44,6 +44,49 @@ func GetAmiIdFromSSM(ctx context.Context, ssmClient *ssm.Client) (string, error)
 }
 
 func CreateDockerClient() (*DockerClient, error) {
+	// Check if we're in local development mode
+	dockerMode := os.Getenv("DOCKER_MODE")
+	if dockerMode == "local" {
+		return createLocalDockerClient()
+	}
+	return createEC2DockerClient()
+}
+
+// createLocalDockerClient creates a Docker client that connects to local Docker daemon
+func createLocalDockerClient() (*DockerClient, error) {
+	fmt.Println("🐳 Using local Docker daemon for development...")
+
+	// Create Docker client that connects to local Docker daemon
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local Docker client: %w", err)
+	}
+
+	// Try to ping the Docker daemon
+	_, err = cli.Ping(context.Background())
+	if err != nil {
+		cli.Close()
+		return nil, fmt.Errorf("failed to connect to local Docker daemon - make sure Docker Desktop is running: %w", err)
+	}
+
+	fmt.Println("✅ Successfully connected to local Docker daemon!")
+
+	return &DockerClient{
+		cli:        cli,
+		ctx:        context.Background(),
+		ec2Client:  nil, // No EC2 client needed for local mode
+		instanceID: "",  // No instance ID for local mode
+		publicIP:   "",  // No public IP for local mode
+	}, nil
+}
+
+// createEC2DockerClient creates a Docker client that connects to EC2 instance (production)
+func createEC2DockerClient() (*DockerClient, error) {
+	fmt.Println("☁️ Using EC2 Docker daemon for production...")
+
 	ec2Client, err := ec2.NewEC2Client()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
@@ -55,7 +98,7 @@ func CreateDockerClient() (*DockerClient, error) {
 		return nil, fmt.Errorf("failed to load AWS config for SSM: %w", err)
 	}
 	ssmClient := ssm.NewFromConfig(cfg)
-	amiID, err := GetAmiIdFromSSM(context.Background(), ssmClient)
+	amiID, err := getAmiIdFromSSM(context.Background(), ssmClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest Amazon Linux 2 AMI ID: %w", err)
 	}
@@ -158,25 +201,7 @@ func (dc *DockerClient) StartContainer(imageName string, pull bool) (TerminalRes
 	}, nil
 }
 
-// functions for debugging
-
-func PrintTerminalResponse(response TerminalResponse) {
-	io.Copy(os.Stdout, response.Result)
-	defer response.Result.Close()
-}
-
-func (dc *DockerClient) ListImages() {
-
-	images, err := dc.cli.ImageList(dc.ctx, image.ListOptions{})
-	if err != nil {
-		panic(err)
-	}
-
-	for _, image := range images {
-		fmt.Println(image.ID)
-	}
-
-}
+// Removed unused debugging functions: PrintTerminalResponse and ListImages
 
 // StopContainer stops a running container
 func (dc *DockerClient) StopContainer(id string) error {
@@ -188,103 +213,21 @@ func (dc *DockerClient) RemoveContainer(id string) error {
 	return dc.cli.ContainerRemove(dc.ctx, id, container.RemoveOptions{})
 }
 
-// BuildAndStartContainerFromGitHub clones a GitHub repository and builds a Docker container from it
-func (dc *DockerClient) BuildAndStartContainerFromGitHub(imageName string, githubURL string) (TerminalResponse, error) {
-	// Create a git client
-	gitClient, err := github.NewGitClient("")
-	if err != nil {
-		dc.Cleanup()
-		return TerminalResponse{}, fmt.Errorf("failed to create git client: %w", err)
-	}
-
-	// Clone the repository
-	repoPath, err := gitClient.CloneRepository(githubURL)
-	if err != nil {
-		dc.Cleanup()
-		return TerminalResponse{}, fmt.Errorf("failed to clone repository: %w", err)
-	}
-	defer gitClient.CleanupRepository(repoPath)
-
-	// Find Dockerfile in the cloned repository
-	dockerfilePath, err := gitClient.FindDockerfile(repoPath)
-	if err != nil {
-		dc.Cleanup()
-		return TerminalResponse{}, fmt.Errorf("failed to find Dockerfile in %s: %w", repoPath, err)
-	}
-
-	// Create pipe for tar stream
-	pr, pw := io.Pipe()
-
-	// Create a channel to signal when tarring is complete
-	tarDone := make(chan error, 1)
-
-	// Start tarring in a goroutine
-	go func() {
-		// Write the tar archive
-		err := gitClient.PrepareDockerBuildContext(dockerfilePath, pw)
-		// Signal completion before closing the pipe
-		tarDone <- err
-		// Only close the pipe after we've signaled completion
-		if err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
-	}()
-
-	// Build the image
-	buildOptions := types.ImageBuildOptions{
-		Tags:       []string{imageName},
-		Dockerfile: filepath.Base(dockerfilePath),
-		Remove:     true,
-	}
-
-	// Start the build
-	response, buildErr := dc.cli.ImageBuild(dc.ctx, pr, buildOptions)
-
-	// Wait for tarring to complete
-	tarErr := <-tarDone
-
-	// Close the read end of the pipe after we're done reading
-	pr.Close()
-
-	// Check for errors
-	if tarErr != nil {
-		dc.Cleanup()
-		return TerminalResponse{}, fmt.Errorf("failed to prepare Docker build context: %w", tarErr)
-	}
-
-	if buildErr != nil {
-		dc.Cleanup()
-		return TerminalResponse{}, fmt.Errorf("failed to build image: %w", buildErr)
-	}
-
-	fmt.Println("Image built successfully to ", imageName)
-
-	// Show build output
-	io.Copy(os.Stdout, response.Body)
-	defer response.Body.Close()
-
-	// Start the container
-	startResponse, err := dc.StartContainer(imageName, false)
-	if err != nil {
-		dc.Cleanup()
-		return TerminalResponse{}, fmt.Errorf("failed to start container %s: %w", imageName, err)
-	}
-
-	// Show container output
-	go func() {
-		// gotta return this somehow instead of printing
-		io.Copy(os.Stdout, startResponse.Result)
-	}()
-
-	return startResponse, nil
-}
+// Removed BuildAndStartContainerFromGitHub - only used by deprecated container manager
 
 func (dc *DockerClient) Cleanup() error {
-	if dc.instanceID != "" {
+	// Only cleanup EC2 instance if we're using EC2 mode
+	if dc.instanceID != "" && dc.ec2Client != nil {
+		fmt.Println("🧹 Cleaning up EC2 instance...")
 		return dc.ec2Client.TerminateInstance(dc.instanceID)
 	}
+
+	// For local mode, just close the Docker client
+	if dc.cli != nil {
+		fmt.Println("🧹 Closing local Docker client...")
+		return dc.cli.Close()
+	}
+
 	return nil
 }
 
@@ -358,7 +301,9 @@ func (dc *DockerClient) BuildAndStartContainerFromGitHubWS(imageName string, git
 	// fmt.Println("Image built successfully to ", imageName)
 
 	// Show build output
-	// io.Copy(os.Stdout, response.Body)
+	fmt.Println("=== Docker Build Output ===")
+	io.Copy(os.Stdout, response.Body)
+	fmt.Println("=== End Docker Build Output ===")
 	defer response.Body.Close()
 
 	// Start the container
@@ -378,49 +323,4 @@ func (dc *DockerClient) BuildAndStartContainerFromGitHubWS(imageName string, git
 	return startResponse, nil
 }
 
-// example usage
-// func main() {
-// 	dc, err := CreateDockerClient()
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	dc.StartContainer("hello-world")
-// }
-
-// S3 container builder
-// func (dc *DockerClient) BuildAndStartContainer(imageName string, s3Key string) (TerminalResponse, error) {
-// 	// Download build context from S3
-// 	buildContext, err := dc.s3Client.DownloadFromS3(s3Key)
-// 	if err != nil {
-// 		return TerminalResponse{}, fmt.Errorf("failed to download build context from S3: %w", err)
-// 	}
-// 	defer buildContext.Close()
-
-// 	buildOptions := types.ImageBuildOptions{
-// 		Tags:       []string{imageName},
-// 		Dockerfile: "Dockerfile",
-// 		Remove:     true,
-// 	}
-
-// 	response, err := dc.cli.ImageBuild(dc.ctx, buildContext, buildOptions)
-// 	if err != nil {
-// 		return TerminalResponse{}, fmt.Errorf("failed to build image: %w", err)
-// 	}
-
-// 	// Show build output
-// 	io.Copy(os.Stdout, response.Body)
-// 	defer response.Body.Close()
-
-// 	startResponse, err := dc.StartContainer(imageName+":latest", false)
-// 	if err != nil {
-// 		return TerminalResponse{}, fmt.Errorf("failed to start container: %w", err)
-// 	}
-
-// 	// Show container output
-// 	go func() {
-// 		io.Copy(os.Stdout, startResponse.Result)
-// 	}()
-
-// 	return startResponse, nil
-// }
+// Removed commented S3 and example code

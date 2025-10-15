@@ -20,8 +20,25 @@ export const CreateNewRoomCard = () => {
             })
             .then(res => res.json())
             .then(data => {
-              console.log(data)
-              router.push(`/${data.data[0].id}`)
+              console.log("Room creation response:", data)
+              console.log("Response structure:", {
+                hasData: !!data.data,
+                dataIsArray: Array.isArray(data.data),
+                dataLength: data.data?.length,
+                fullData: data
+              })
+              
+              // Handle different response formats
+              if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+                router.push(`/${data.data[0].id}`)
+              } else if (data.data && data.data.id) {
+                router.push(`/${data.data.id}`)
+              } else if (data.id) {
+                router.push(`/${data.id}`)
+              } else {
+                console.error("Unexpected response format:", data)
+                alert("Room created but navigation failed. Check console for details.")
+              }
             })
           }}>
             <CardContent className="flex flex-col h-full">
