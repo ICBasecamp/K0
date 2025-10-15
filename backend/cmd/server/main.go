@@ -28,7 +28,7 @@ var (
 
 func main() {
 	log.Println("Starting K0 backend server...")
-	err := godotenv.Load(".env")
+	err := godotenv.Load("../../../.env")
 	if err != nil {
 		log.Fatalf("Failed to load .env file: %v", err)
 	}
