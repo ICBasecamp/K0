@@ -27,25 +27,31 @@ var (
 )
 
 func main() {
-	err := godotenv.Load("../../.env")
+	log.Println("Starting K0 backend server...")
+	err := godotenv.Load(".env")
 	if err != nil {
 		log.Fatalf("Failed to load .env file: %v", err)
 	}
+	log.Println("Environment file loaded successfully")
 
 	// S3 client removed - no longer needed for simplified Docker service
 
 	// Create Docker client
+	log.Println("Creating Docker client...")
 	dockerClient, err = docker.CreateDockerClient()
 	if err != nil {
 		log.Fatalf("Failed to create Docker client: %v", err)
 	}
+	log.Println("Docker client created successfully")
 
 	// Create supabase client
+	log.Println("Initializing Supabase client...")
 	var supabaseErr error
 	supabaseClient, supabaseErr = supabase.NewClient(os.Getenv("SUPABASE_URL"), os.Getenv("SUPABASE_ANON_KEY"), &supabase.ClientOptions{})
 	if supabaseErr != nil {
 		log.Fatalf("Failed to initialize Supabase client: %v", supabaseErr)
 	}
+	log.Println("Supabase client initialized successfully")
 
 	app := fiber.New(fiber.Config{
 		ReadBufferSize:  1024 * 1024,
@@ -197,7 +203,10 @@ func main() {
 		}
 	}))
 
-	app.Listen(":3009")
+	log.Println("Starting server on port 3009...")
+	if err := app.Listen(":3009"); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
 
 func filterPrintable(input []byte) string {

@@ -55,7 +55,7 @@ func CreateDockerClient() (*DockerClient, error) {
 // createLocalDockerClient creates a Docker client that connects to local Docker daemon
 func createLocalDockerClient() (*DockerClient, error) {
 	fmt.Println("🐳 Using local Docker daemon for development...")
-	
+
 	// Create Docker client that connects to local Docker daemon
 	cli, err := client.NewClientWithOpts(
 		client.FromEnv,
@@ -86,7 +86,7 @@ func createLocalDockerClient() (*DockerClient, error) {
 // createEC2DockerClient creates a Docker client that connects to EC2 instance (production)
 func createEC2DockerClient() (*DockerClient, error) {
 	fmt.Println("☁️ Using EC2 Docker daemon for production...")
-	
+
 	ec2Client, err := ec2.NewEC2Client()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create EC2 client: %w", err)
@@ -221,13 +221,13 @@ func (dc *DockerClient) Cleanup() error {
 		fmt.Println("🧹 Cleaning up EC2 instance...")
 		return dc.ec2Client.TerminateInstance(dc.instanceID)
 	}
-	
+
 	// For local mode, just close the Docker client
 	if dc.cli != nil {
 		fmt.Println("🧹 Closing local Docker client...")
 		return dc.cli.Close()
 	}
-	
+
 	return nil
 }
 
