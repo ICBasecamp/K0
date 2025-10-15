@@ -301,7 +301,9 @@ func (dc *DockerClient) BuildAndStartContainerFromGitHubWS(imageName string, git
 	// fmt.Println("Image built successfully to ", imageName)
 
 	// Show build output
-	// io.Copy(os.Stdout, response.Body)
+	fmt.Println("=== Docker Build Output ===")
+	io.Copy(os.Stdout, response.Body)
+	fmt.Println("=== End Docker Build Output ===")
 	defer response.Body.Close()
 
 	// Start the container

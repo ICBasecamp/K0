@@ -102,7 +102,7 @@ const ImportRepository = ({ currentLogs, setLogs, setIsContainerStarting, isCont
                                 })
                                 .catch(err => {
                                     setIsContainerStarting(false)
-                                    console.log(""< err)
+                                    console.log("Error starting container:", err)
                                 })
                             }}
                             disabled={isContainerStarting}
